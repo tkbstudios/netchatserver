@@ -101,6 +101,8 @@ def receive_messages(socket_conn):
             recv_msg_bytes = socket_conn.recv(1024)
             if recv_msg_bytes:
                 recv_bytes_decoded = recv_msg_bytes.decode().strip()
+                if recv_bytes_decoded == "SERVER_SHUTDOWN":
+                    logger.warning("Server announced server shutdown.")
                 recv_msg_data = recv_bytes_decoded.split(":", 2)
                 if len(recv_msg_data) == 3:
                     recv_recipient, recv_username, recv_msg = recv_msg_data

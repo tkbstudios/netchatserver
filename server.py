@@ -1,9 +1,12 @@
+import random
 import socket
+import string
 import threading
 import requests
 import logging
 from colorlog import ColoredFormatter
 import time
+import configparser
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -31,6 +34,11 @@ TINET_BASE_API_URL = "https://tinet.tkbstudios.com/api"
 
 sessions = {}
 user_last_message_time = {}
+
+config = configparser.ConfigParser()
+config.read('server.properties')
+
+SERVER_ONLINE = False
 
 
 def get_user_data_from_api(username):
@@ -61,12 +69,13 @@ def check_rate_limit(username):
 
 
 def handle_client(client_socket, client_address, clients):
+    global SERVER_ONLINE
     logger.debug(f"Accepted connection from {client_address}")
 
     authenticated = False
     username = None
 
-    while True:
+    while SERVER_ONLINE:
         try:
             data = client_socket.recv(2048)
             if not data:
@@ -80,7 +89,16 @@ def handle_client(client_socket, client_address, clients):
                     if len(parts) == 3:
                         _, received_username, received_session_token = parts
                         session_token = received_session_token
-                        sessions[received_username] = session_token
+                        if not config.getboolean('server', 'online-mode', fallback=True):
+                            authenticated = True
+                            username = received_username
+                            session_token = ''.join(
+                                random.choice(string.ascii_letters + string.digits) for _ in range(256)
+                            )
+                            sessions[received_username] = session_token
+                            client_socket.sendall(b"AUTH_SUCCESS")
+                            return
+
                         if session_token:
                             userdata = get_user_data_from_api(received_username)
                             if userdata:
@@ -129,26 +147,58 @@ def handle_client(client_socket, client_address, clients):
 
 
 def main():
+    global SERVER_ONLINE
     host = '0.0.0.0'
     port = 2052
+
+    # load and check settings
+    if not config.getboolean('server', 'online-mode', fallback=True):
+        logger.warning("⚠️ " + "=" * 53)
+        logger.warning("⚠️ = WARNING: This server is running in offline/insecure mode! =")
+        logger.warning("⚠️ = This will not check TINET for authentication!             =")
+        logger.warning("⚠️ = People won't need to provide valid credentials to use     =")
+        logger.warning("⚠️ = any username they want, this might cause issues, please   =")
+        logger.warning("⚠️ = put your online-mode field back to true in the [server]   =")
+        logger.warning("⚠️ = section in server.properties to ensure max. security!     =")
+        logger.warning("⚠️ = It is recommended to run the server in online mode for    =")
+        logger.warning("⚠️ = improved security and authentication.                     =")
+        logger.warning("⚠️ " + "=" * 53)
+
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.bind((host, port))
+    server_socket.settimeout(1)
     server_socket.listen(5)
     logger.info(f"Server listening on {host}:{port}")
 
     clients = []
 
+    SERVER_ONLINE = True
+
     try:
-        while True:
-            client_socket, client_address = server_socket.accept()
+        while SERVER_ONLINE:
+            try:
+                client_socket, client_address = server_socket.accept()
+            except TimeoutError:
+                continue
             clients.append(client_socket)
             client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address, clients))
             client_thread.start()
     except KeyboardInterrupt:
         logger.info("Shutting down the server.")
+        logger.info(f"This might take some time since we are announcing {len(clients)} clients.")
+        client_index = 0
         for client_socket in clients:
+            logger.debug(f"Closing client {client_index}/{len(clients)}.")
+            client_socket.sendall(b"SERVER_SHUTDOWN")
+            time.sleep(100)
             client_socket.close()
         server_socket.close()
+
+        SERVER_ONLINE = False
+
+        for thread in threading.enumerate():
+            if thread != threading.current_thread():
+                thread.join()
 
 
 if __name__ == "__main__":
