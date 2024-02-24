@@ -83,7 +83,7 @@ def handle_client(client_socket, client_address, clients):
                             else:
                                 client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET")
                         else:
-                            sessions.pop(username)
+                            sessions.pop(received_username)
                             client_socket.sendall(b"AUTH_FAILED:Could not fetch a session token from TINET")
                             logger.warning(f"Authentication failed for user {received_username}.")
                     else:
@@ -110,6 +110,8 @@ def handle_client(client_socket, client_address, clients):
 
     clients.remove(client_socket)
     client_socket.close()
+    if username:
+        sessions.pop(username)
     logger.debug(f"Connection from {client_address} closed")
 
 
