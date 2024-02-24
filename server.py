@@ -95,13 +95,12 @@ def handle_client(client_socket, client_address, clients):
                     recipient, msg = message.split(":", 1)
                     recipient = recipient.strip()
                     msg = msg.strip()
-                    for c in clients:
-                        if c != client_socket:
-                            if c.getpeername()[0] == recipient and c.getpeername()[0] in sessions:
-                                c.sendall(f"{username}: {msg}".encode())
-                                break
+                    if recipient.lower() == "global":
+                        for client in clients:
+                            client.sendall(f"{recipient}:{username}:{msg}".encode())
+                            logger.debug(f"{username} sent `{msg}` to all clients in global lobby.")
                     else:
-                        client_socket.sendall(b"ERROR:Recipient not found or not authenticated")
+                        client_socket.sendall(b"ERROR:Please use the `global` recipient for now")
                 else:
                     client_socket.sendall(b"ERROR:Invalid message format")
         except Exception as e:

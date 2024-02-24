@@ -2,6 +2,7 @@ import os
 import sys
 import socket
 import logging
+import threading
 
 import requests
 from colorlog import ColoredFormatter
@@ -63,6 +64,22 @@ def get_session_token(username, calc_key):
     return None
 
 
+def receive_messages(client_socket):
+    while True:
+        try:
+            recv_bytes = client_socket.recv(1024)
+            if recv_bytes:
+                recv_bytes_decoded = recv_bytes.decode().strip()
+                recv_recipient, recv_username, recv_msg = recv_bytes_decoded.split(":", 2)
+                logger.info(f"{recv_username}: {recv_msg}")
+            else:
+                logger.error("Disconnected from server.")
+                break
+        except Exception as e:
+            logger.error(f"Error receiving message: {e}")
+            break
+
+
 if __name__ == "__main__":
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     logger.info(f"Connecting to the NETCHAT server at {NETCHAT_SERVER_HOST}:{NETCHAT_SERVER_PORT} ...")
@@ -86,6 +103,11 @@ if __name__ == "__main__":
                     sys.exit(1)
 
     logger.info("You can now chat with other people!")
+
+    receive_thread = threading.Thread(target=receive_messages, args=(client_socket,))
+    receive_thread.daemon = True
+    receive_thread.start()
+
     while True:
         recipient = input("Recipient: ")
         message_to_send = input("Message to send: ")
