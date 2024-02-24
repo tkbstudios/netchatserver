@@ -31,28 +31,6 @@ TINET_BASE_API_URL = "https://tinet.tkbstudios.com/api"
 sessions = {}
 
 
-def get_session_token(username, calc_key):
-    get_session_url = f"{TINET_BASE_API_URL}/v1/user/calc/auth"
-    headers = {
-        "Content-Type": 'application/json',
-        "Accept": 'application/json'
-    }
-    body = {
-        "username": username,
-        "calc_key": calc_key
-    }
-    session_token_request = requests.post(get_session_url, headers=headers, json=body)
-    if session_token_request.status_code == 200:
-        session_token_request_json = session_token_request.json()
-        if session_token_request_json['auth_success'] is True:
-            session_token = session_token_request_json['session_token']
-            sessions[username] = session_token
-            return session_token
-        else:
-            return False
-    return None
-
-
 def get_user_data_from_api(username):
     session_token = sessions.get(username)
     if session_token:
@@ -79,7 +57,6 @@ def handle_client(client_socket, client_address, clients):
 
     authenticated = False
     username = None
-    userdata = None
 
     while True:
         try:
@@ -93,10 +70,9 @@ def handle_client(client_socket, client_address, clients):
                 if message.startswith("AUTH:"):
                     parts = message.split(":")
                     if len(parts) == 3:
-                        _, received_username, received_calc_key = parts
-
-                        session_token = get_session_token(received_username, received_calc_key)
-
+                        _, received_username, received_session_token = parts
+                        session_token = received_session_token
+                        sessions[received_username] = session_token
                         if session_token:
                             userdata = get_user_data_from_api(received_username)
                             if userdata:
@@ -107,6 +83,7 @@ def handle_client(client_socket, client_address, clients):
                             else:
                                 client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET")
                         else:
+                            sessions.pop(username)
                             client_socket.sendall(b"AUTH_FAILED:Could not fetch a session token from TINET")
                             logger.warning(f"Authentication failed for user {received_username}.")
                     else:
