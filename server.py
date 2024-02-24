@@ -148,8 +148,6 @@ def handle_client(client_socket, client_address, clients):
 
 def main():
     global SERVER_ONLINE
-    host = '0.0.0.0'
-    port = 2052
 
     # load and check settings
     if not config.getboolean('server', 'online-mode', fallback=True):
@@ -165,10 +163,15 @@ def main():
         logger.warning("⚠️ " + "=" * 53)
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((host, port))
+    server_socket.bind(
+        (
+            config.get('server', 'host', fallback="127.0.0.1"),
+            config.getint('server', 'port', fallback=2052)
+        )
+    )
     server_socket.settimeout(1)
     server_socket.listen(5)
-    logger.info(f"Server listening on {host}:{port}")
+    logger.info(f"Server listening on {config.get('server', 'host', fallback="127.0.0.1")}:{config.getint('server', 'port', fallback=2052)}")
 
     clients = []
 
