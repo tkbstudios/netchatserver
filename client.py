@@ -3,6 +3,7 @@ import sys
 import socket
 import logging
 import threading
+from datetime import datetime, timedelta
 
 import requests
 from colorlog import ColoredFormatter
@@ -44,6 +45,33 @@ TINET_CALC_KEY = os.environ.get("TINET_CALC_KEY")
 
 
 def get_session_token(username, calc_key):
+    session_token_file = 'session.txt'
+    if os.path.exists(session_token_file):
+        with open(session_token_file, 'r') as file:
+            token = file.read()
+            if len(token) == 1:
+                logger.info("Using the token from session.txt, checking token...")
+                auth_with_session_token_url = f"{TINET_BASE_API_URL}/v1/user/sessions/auth"
+                headers = {
+                    "Content-Type": 'application/json',
+                    "Accept": 'application/json'
+                }
+                body = {
+                    "username": username,
+                    "session_token": token
+                }
+                logger.debug("send POST request to API to check token")
+                session_token_request = requests.post(auth_with_session_token_url, headers=headers, json=body)
+                logger.debug(f"request status code: {session_token_request.status_code}")
+                if session_token_request.status_code == 200:
+                    user_data = session_token_request.json()
+                    print(user_data)
+                    if user_data['username'] == username:
+                        logger.info("Token is valid")
+                        return token
+                    else:
+                        logger.info("Token invalid, requesting a new one.")
+
     get_session_url = f"{TINET_BASE_API_URL}/v1/user/calc/auth"
     headers = {
         "Content-Type": 'application/json',
@@ -58,20 +86,27 @@ def get_session_token(username, calc_key):
         session_token_request_json = session_token_request.json()
         if session_token_request_json['auth_success'] is True:
             session_token = session_token_request_json['session_token']
+            expiration_time = datetime.now() + timedelta(hours=10)
+            with open(session_token_file, 'w') as file:
+                file.write(f"{session_token}\n{expiration_time.isoformat()}")
             return session_token
         else:
             return False
     return None
 
 
-def receive_messages(client_socket):
+def receive_messages(socket_conn):
     while True:
         try:
-            recv_bytes = client_socket.recv(1024)
-            if recv_bytes:
-                recv_bytes_decoded = recv_bytes.decode().strip()
-                recv_recipient, recv_username, recv_msg = recv_bytes_decoded.split(":", 2)
-                logger.info(f"{recv_username}: {recv_msg}")
+            recv_msg_bytes = socket_conn.recv(1024)
+            if recv_msg_bytes:
+                recv_bytes_decoded = recv_msg_bytes.decode().strip()
+                recv_msg_data = recv_bytes_decoded.split(":", 2)
+                if len(recv_msg_data) == 3:
+                    recv_recipient, recv_username, recv_msg = recv_msg_data
+                    logger.info(f"{recv_username}: {recv_msg}")
+                else:
+                    logger.error(f"Could not send message! Response from server: {recv_bytes_decoded}")
             else:
                 logger.error("Disconnected from server.")
                 break

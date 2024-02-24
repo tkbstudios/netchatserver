@@ -3,6 +3,7 @@ import threading
 import requests
 import logging
 from colorlog import ColoredFormatter
+import time
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -12,10 +13,10 @@ formatter = ColoredFormatter(
     datefmt=None,
     reset=True,
     log_colors={
-        'DEBUG':    'cyan',
-        'INFO':     'green',
-        'WARNING':  'yellow',
-        'ERROR':    'red',
+        'DEBUG': 'cyan',
+        'INFO': 'green',
+        'WARNING': 'yellow',
+        'ERROR': 'red',
         'CRITICAL': 'red,bg_white',
     },
     secondary_log_colors={},
@@ -29,6 +30,7 @@ logger.addHandler(console_handler)
 TINET_BASE_API_URL = "https://tinet.tkbstudios.com/api"
 
 sessions = {}
+user_last_message_time = {}
 
 
 def get_user_data_from_api(username):
@@ -50,8 +52,14 @@ def get_user_data_from_api(username):
     return None
 
 
-# TODO: make sending messages work
-# TODO: add rate limiting
+def check_rate_limit(username):
+    last_message_time = user_last_message_time.get(username)
+    if last_message_time is not None:
+        elapsed_time = time.time() - last_message_time
+        if elapsed_time < 1:
+            time.sleep(1 - elapsed_time)
+
+
 def handle_client(client_socket, client_address, clients):
     logger.debug(f"Accepted connection from {client_address}")
 
@@ -95,7 +103,13 @@ def handle_client(client_socket, client_address, clients):
                     recipient, msg = message.split(":", 1)
                     recipient = recipient.strip()
                     msg = msg.strip()
+                    if len(recipient) < 3:
+                        client_socket.sendall(b"ERROR:Invalid message format (recipient must be at least 3 characters)")
+                        return
+
                     if recipient.lower() == "global":
+                        check_rate_limit(username)
+                        user_last_message_time[username] = time.time()
                         for client in clients:
                             client.sendall(f"{recipient}:{username}:{msg}".encode())
                             logger.debug(f"{username} sent `{msg}` to all clients in global lobby.")
