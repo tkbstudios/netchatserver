@@ -1,3 +1,4 @@
+import os
 import random
 import socket
 import string
@@ -7,6 +8,7 @@ import logging
 from colorlog import ColoredFormatter
 import time
 import configparser
+import dotenv
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -38,6 +40,9 @@ user_last_message_time = {}
 config = configparser.ConfigParser()
 config.read('server.properties')
 
+dotenv.load_dotenv('.env')
+APP_API_KEY = os.environ.get("APP_API_KEY").strip()
+
 SERVER_ONLINE = False
 
 
@@ -47,7 +52,8 @@ def get_user_data_from_api(username):
         auth_with_session_token_url = f"{TINET_BASE_API_URL}/v1/user/sessions/auth"
         headers = {
             "Content-Type": 'application/json',
-            "Accept": 'application/json'
+            "Accept": 'application/json',
+            "Api-Key": APP_API_KEY
         }
         body = {
             "username": username,
@@ -97,21 +103,21 @@ def handle_client(client_socket, client_address, clients):
                             )
                             sessions[received_username] = session_token
                             client_socket.sendall(b"AUTH_SUCCESS")
-                            return
-
-                        if session_token:
-                            userdata = get_user_data_from_api(received_username)
-                            if userdata:
-                                authenticated = True
-                                username = received_username
-                                client_socket.sendall(b"AUTH_SUCCESS")
-                                logger.debug(f"User {username} authenticated successfully. User data: {userdata}")
-                            else:
-                                client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET")
                         else:
-                            sessions.pop(received_username)
-                            client_socket.sendall(b"AUTH_FAILED:Could not fetch a session token from TINET")
-                            logger.warning(f"Authentication failed for user {received_username}.")
+                            if session_token:
+                                username = received_username
+                                sessions[received_username] = session_token
+                                userdata = get_user_data_from_api(received_username)
+                                if userdata:
+                                    authenticated = True
+                                    client_socket.sendall(b"AUTH_SUCCESS")
+                                    logger.debug(f"User {username} authenticated successfully. User data: {userdata}")
+                                else:
+                                    client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET")
+                            else:
+                                sessions.pop(received_username)
+                                client_socket.sendall(b"AUTH_FAILED:No valid session token")
+                                logger.warning(f"Authentication failed for user {received_username}.")
                     else:
                         client_socket.sendall(b"ERROR:Invalid message format")
                 else:
@@ -171,7 +177,12 @@ def main():
     )
     server_socket.settimeout(1)
     server_socket.listen(5)
-    logger.info(f"Server listening on {config.get('server', 'host', fallback="127.0.0.1")}:{config.getint('server', 'port', fallback=2052)}")
+    logger.info(
+        f"Server listening on "
+        f"{config.get('server', 'host', fallback="127.0.0.1")}"
+        f":"
+        f"{config.getint('server', 'port', fallback=2052)}"
+    )
 
     clients = []
 
