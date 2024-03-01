@@ -1,0 +1,16 @@
+version: "3"
+
+services:
+  netchatserver:
+    image: ghcr.io/tkbstudios/tinetbackend:master
+    container_name: netchatserver
+    restart: unless-stopped
+    ports:
+      - "2052:2052"
+    volumes:
+      - type: bind
+        source: ./.env
+        target: /netchat/.env
+      - type: bind
+        source: ./server.properties
+        target: /netchat/server.properties
