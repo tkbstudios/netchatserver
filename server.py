@@ -102,7 +102,7 @@ def handle_client(client_socket, client_address, clients):
                                 random.choice(string.ascii_letters + string.digits) for _ in range(256)
                             )
                             sessions[received_username] = session_token
-                            client_socket.sendall(b"AUTH_SUCCESS")
+                            client_socket.sendall(b"AUTH_SUCCESS\n")
                         else:
                             if session_token:
                                 username = received_username
@@ -110,44 +110,46 @@ def handle_client(client_socket, client_address, clients):
                                 userdata = get_user_data_from_api(received_username)
                                 if userdata:
                                     authenticated = True
-                                    client_socket.sendall(b"AUTH_SUCCESS")
+                                    client_socket.sendall(b"AUTH_SUCCESS\n")
                                     logger.debug(f"User {username} authenticated successfully. User data: {userdata}")
                                 else:
-                                    client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET")
+                                    client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET\n")
                             else:
                                 sessions.pop(received_username)
-                                client_socket.sendall(b"AUTH_FAILED:No valid session token")
+                                client_socket.sendall(b"AUTH_FAILED:No valid session token\n")
                                 logger.warning(f"Authentication failed for user {received_username}.")
                     else:
-                        client_socket.sendall(b"ERROR:Invalid message format")
+                        client_socket.sendall(b"ERROR:Invalid message format\n")
                 else:
-                    client_socket.sendall(b"AUTH_REQUIRED")
+                    client_socket.sendall(b"AUTH_REQUIRED\n")
             else:
                 if ":" in message:
                     recipient, msg = message.split(":", 1)
                     recipient = recipient.strip()
                     msg = msg.strip()
                     if len(recipient) < 3:
-                        client_socket.sendall(b"ERROR:Invalid message format (recipient must be at least 3 characters)")
+                        client_socket.sendall(
+                            b"ERROR:Invalid message format (recipient must be at least 3 characters)\n"
+                        )
                         return
 
                     if recipient.lower() == "global":
                         check_rate_limit(username)
                         user_last_message_time[username] = time.time()
                         for client in clients:
-                            client.sendall(f"{recipient}:{username}:{msg}".encode())
+                            client.sendall(f"{recipient}:{username}:{msg}\n".encode())
                             logger.debug(f"{username} sent `{msg}` to all clients in global lobby.")
                     else:
-                        client_socket.sendall(b"ERROR:Please use the `global` recipient for now")
+                        client_socket.sendall(b"ERROR:Please use the `global` recipient for now\n")
                 else:
-                    client_socket.sendall(b"ERROR:Invalid message format")
+                    client_socket.sendall(b"ERROR:Invalid message format\n")
         except Exception as e:
             logger.error(f"Error: {e}")
             break
 
     clients.remove(client_socket)
     client_socket.close()
-    if username:
+    if username and username in sessions:
         sessions.pop(username)
     logger.debug(f"Connection from {client_address} closed")
 
