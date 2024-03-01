@@ -139,6 +139,29 @@ def handle_client(client_socket, client_address, clients):
                         for client in clients:
                             client.sendall(f"{recipient}:{username}:{msg}\n".encode())
                             logger.debug(f"{username} sent `{msg}` to all clients in global lobby.")
+                            if config.getboolean('discord', 'hook-enabled', fallback=False):
+                                hook_url = config.get('discord', 'hook-url', fallback=None)
+                                if hook_url:
+                                    body = {
+                                        "content": "",
+                                        "embeds": [
+                                            {
+                                                "title": "New Message",
+                                                "description": msg,
+                                                "color": 65280,
+                                                "author": {
+                                                    "name": username
+                                                },
+                                                "footer": {
+                                                    "text": "Sent from NETCHAT Server"
+                                                }
+                                            }
+                                        ]
+                                    }
+                                    hook_post_request = requests.post(hook_url, json=body)
+                                    if hook_post_request.status_code == 202:
+                                        logger.debug(f"{username} sent `{msg}` to discord hook.")
+
                     else:
                         client_socket.sendall(b"ERROR:Please use the `global` recipient for now\n")
                 else:
