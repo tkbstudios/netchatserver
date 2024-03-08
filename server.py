@@ -143,20 +143,8 @@ def handle_client(client_socket, client_address, clients):
                                 hook_url = config.get('discord', 'hook-url', fallback=None)
                                 if hook_url:
                                     body = {
-                                        "content": "",
-                                        "embeds": [
-                                            {
-                                                "title": "New Message",
-                                                "description": msg,
-                                                "color": 65280,
-                                                "author": {
-                                                    "name": username
-                                                },
-                                                "footer": {
-                                                    "text": "Sent from NETCHAT Server"
-                                                }
-                                            }
-                                        ]
+                                        "username": username,
+                                        "content": msg
                                     }
                                     hook_post_request = requests.post(hook_url, json=body)
                                     if hook_post_request.status_code == 202:
@@ -188,7 +176,7 @@ def main():
         logger.warning("⚠️ = People won't need to provide valid credentials to use     =")
         logger.warning("⚠️ = any username they want, this might cause issues, please   =")
         logger.warning("⚠️ = put your online-mode field back to true in the [server]   =")
-        logger.warning("⚠️ = section in server.properties to ensure max. security!     =")
+        logger.warning("⚠️ = section in server.properties.example to ensure max. security!     =")
         logger.warning("⚠️ = It is recommended to run the server in online mode for    =")
         logger.warning("⚠️ = improved security and authentication.                     =")
         logger.warning("⚠️ " + "=" * 53)
