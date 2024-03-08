@@ -11,7 +11,7 @@ import configparser
 import dotenv
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 formatter = ColoredFormatter(
     "%(log_color)s%(levelname)-8s%(reset)s %(cyan)s%(message)s",
@@ -32,221 +32,229 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-TINET_BASE_API_URL = "https://tinet.tkbstudios.com/api"
-
-sessions = {}
-user_last_message_time = {}
-
-config = configparser.ConfigParser()
-config.read('server.properties')
-PUBLIC_ACCESS_HOST = config.get('server', 'public-access-host', fallback="no address set")
-WELCOME_MESSAGE_ENABLED = config.getboolean('server', 'enable-welcome-message', fallback=False)
-WELCOME_MESSAGE = config.get('server', 'welcome-message', fallback="There's no welcome message set!")
-MAX_MESSAGE_LENGTH = config.getint('server', 'max-message-length', fallback=256)
-ANNOUNCE_NEW_USERS = config.getboolean('server', 'announce-new-clients', fallback=True)
-
 dotenv.load_dotenv('.env')
-APP_API_KEY = os.environ.get("APP_API_KEY").strip()
-
-SERVER_ONLINE = False
-
-clients = []
 
 
-def get_user_data_from_api(username):
-    session_token = sessions.get(username)
-    if session_token:
-        auth_with_session_token_url = f"{TINET_BASE_API_URL}/v1/user/sessions/auth"
-        headers = {
-            "Content-Type": 'application/json',
-            "Accept": 'application/json',
-            "Api-Key": APP_API_KEY
-        }
-        body = {
-            "username": username,
-            "session_token": session_token
-        }
-        session_token_request = requests.post(auth_with_session_token_url, headers=headers, json=body)
-        if session_token_request.status_code == 200:
-            user_data = session_token_request.json()
-            return user_data
-    return None
+class Server:
+    def __init__(self):
+        self.sessions = {}
+        self.user_last_message_time = {}
+        self.config = configparser.ConfigParser()
+        self.config.read('server.properties')
+        self.PUBLIC_ACCESS_HOST = self.config.get('server', 'public-access-host', fallback="no address set")
+        self.WELCOME_MESSAGE_ENABLED = self.config.getboolean('server', 'enable-welcome-message', fallback=False)
+        self.WELCOME_MESSAGE = self.config.get('server', 'welcome-message', fallback="There's no welcome message set!")
+        self.MAX_MESSAGE_LENGTH = self.config.getint('server', 'max-message-length', fallback=256)
+        self.ANNOUNCE_NEW_USERS = self.config.getboolean('server', 'announce-new-clients', fallback=True)
+        self.APP_API_KEY = os.environ.get("APP_API_KEY").strip()
+        self.SERVER_ONLINE = False
+        self.clients = []
+        self.server_socket = None
+        self.shutdown_requested = False
 
+    def get_user_data_from_api(self, username):
+        session_token = self.sessions.get(username)
+        if session_token:
+            auth_with_session_token_url = f"https://tinet.tkbstudios.com/api/v1/user/sessions/auth"
+            headers = {
+                "Content-Type": 'application/json',
+                "Accept": 'application/json',
+                "Api-Key": self.APP_API_KEY
+            }
+            body = {
+                "username": username,
+                "session_token": session_token
+            }
+            session_token_request = requests.post(auth_with_session_token_url, headers=headers, json=body)
+            if session_token_request.status_code == 200:
+                user_data = session_token_request.json()
+                return user_data
+        return None
 
-def check_rate_limit(username):
-    last_message_time = user_last_message_time.get(username)
-    if last_message_time is not None:
-        elapsed_time = time.time() - last_message_time
-        if elapsed_time < 1:
-            time.sleep(1 - elapsed_time)
+    def check_rate_limit(self, username):
+        last_message_time = self.user_last_message_time.get(username)
+        if last_message_time is not None:
+            elapsed_time = time.time() - last_message_time
+            if elapsed_time < 1:
+                time.sleep(1 - elapsed_time)
 
+    def send_global_message(self, usr, msg):
+        for client in self.clients:
+            client.sendall(f"global:{usr}:{msg}\n".encode())
+            logger.debug(f"{usr} sent `{msg}` to all clients in global lobby.")
+            if self.config.getboolean('discord', 'hook-enabled', fallback=False):
+                hook_url = self.config.get('discord', 'hook-url', fallback=None)
+                if hook_url:
+                    body = {
+                        "username": f"[NETCHAT] {usr} "
+                                    f"({self.PUBLIC_ACCESS_HOST})",
+                        "content": msg
+                    }
+                    hook_post_request = requests.post(hook_url, json=body)
+                    if hook_post_request.status_code == 200:
+                        logger.debug(f"Sent `{msg}` to Discord hook.")
 
-def send_global_message(usr, msg):
-    for client in clients:
-        client.sendall(f"global:{usr}:{msg}\n".encode())
-        logger.debug(f"{usr} sent `{msg}` to all clients in global lobby.")
-        if config.getboolean('discord', 'hook-enabled', fallback=False):
-            hook_url = config.get('discord', 'hook-url', fallback=None)
-            if hook_url:
-                body = {
-                    "username": f"[NETCHAT] {usr} "
-                                f"({PUBLIC_ACCESS_HOST})",
-                    "content": msg
-                }
-                hook_post_request = requests.post(hook_url, json=body)
-                if hook_post_request.status_code == 200:
-                    logger.debug(f"Sent `{msg}` to Discord hook.")
+    def handle_client(self, client_socket, client_address):
+        logger.debug(f"Accepted connection from {client_address}")
 
+        authenticated = False
+        username = None
 
-def handle_client(client_socket, client_address):
-    global SERVER_ONLINE
-    logger.debug(f"Accepted connection from {client_address}")
+        while self.SERVER_ONLINE:
+            try:
+                data = client_socket.recv(2048)
+                if not data:
+                    break
 
-    authenticated = False
-    username = None
+                received_message = data.decode().strip()
 
-    while SERVER_ONLINE:
-        try:
-            data = client_socket.recv(2048)
-            if not data:
-                break
-
-            received_message = data.decode().strip()
-
-            if not authenticated:
-                if received_message.startswith("AUTH:"):
-                    parts = received_message.split(":")
-                    if len(parts) == 3:
-                        _, received_username, received_session_token = parts
-                        session_token = received_session_token
-                        if not config.getboolean('server', 'online-mode', fallback=True):
-                            authenticated = True
-                            session_token = ''.join(
-                                random.choice(string.ascii_letters + string.digits) for _ in range(256)
-                            )
-                            username = received_username
-                            sessions[received_username] = session_token
-                            client_socket.sendall(b"AUTH_SUCCESS\n")
-                        else:
-                            if session_token:
+                if not authenticated:
+                    if received_message.startswith("AUTH:"):
+                        parts = received_message.split(":")
+                        if len(parts) == 3:
+                            _, received_username, received_session_token = parts
+                            session_token = received_session_token
+                            if not self.config.getboolean('server', 'online-mode', fallback=True):
+                                authenticated = True
+                                session_token = ''.join(
+                                    random.choice(string.ascii_letters + string.digits) for _ in range(256)
+                                )
                                 username = received_username
-                                sessions[received_username] = session_token
-                                userdata = get_user_data_from_api(received_username)
-                                if userdata:
-                                    authenticated = True
-                                    client_socket.sendall(b"AUTH_SUCCESS\n")
-                                    logger.debug(f"User {username} authenticated successfully. User data: {userdata}")
-                                    if WELCOME_MESSAGE_ENABLED:
-                                        client_socket.sendall(WELCOME_MESSAGE.encode())
-                                else:
-                                    client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET\n")
+                                self.sessions[username] = session_token
+                                logger.info(f"{username} has logged in!")
+                                if self.ANNOUNCE_NEW_USERS:
+                                    self.send_global_message("[server]", f"{username} has joined!")
+                                client_socket.sendall(b"AUTH_SUCCESS\n")
                             else:
-                                if received_message in sessions:
-                                    sessions.pop(received_username)
-                                client_socket.sendall(b"AUTH_FAILED:No valid session token\n")
-                                logger.warning(f"Authentication failed for user {received_username}.")
+                                if session_token:
+                                    username = received_username
+                                    self.sessions[received_username] = session_token
+                                    userdata = self.get_user_data_from_api(received_username)
+                                    if userdata:
+                                        authenticated = True
+                                        client_socket.sendall(b"AUTH_SUCCESS\n")
+                                        logger.debug(
+                                            f"User {username} authenticated successfully. User data: {userdata}")
+                                        if self.WELCOME_MESSAGE_ENABLED:
+                                            client_socket.sendall(self.WELCOME_MESSAGE.encode())
+                                        if self.ANNOUNCE_NEW_USERS:
+                                            self.send_global_message("[server]", f"{username} has joined!")
+                                    else:
+                                        client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET\n")
+                                else:
+                                    if received_message in self.sessions:
+                                        self.sessions.pop(received_username)
+                                    client_socket.sendall(b"AUTH_FAILED:No valid session token\n")
+                                    logger.warning(f"Authentication failed for user {received_username}.")
+                        else:
+                            client_socket.sendall(b"ERROR:Invalid message format\n")
+                    else:
+                        client_socket.sendall(b"AUTH_REQUIRED\n")
+                else:
+                    if ":" in received_message:
+                        recipient, message = received_message.split(":", 1)
+                        recipient = recipient.strip()
+                        message = message.strip()
+                        message = message[:self.MAX_MESSAGE_LENGTH]
+                        if len(recipient) < 3:
+                            client_socket.sendall(
+                                b"ERROR:Invalid message format (recipient must be at least 3 characters)\n"
+                            )
+                            continue
+
+                        if len(message) == 0:
+                            client_socket.sendall(
+                                b"ERROR:You can't send an empty message...\n"
+                            )
+                            continue
+
+                        if recipient.lower() == "global":
+                            self.check_rate_limit(username)
+                            self.user_last_message_time[username] = time.time()
+                            self.send_global_message(username, message)
+
+                        else:
+                            client_socket.sendall(b"ERROR:Please use the `global` recipient for now\n")
                     else:
                         client_socket.sendall(b"ERROR:Invalid message format\n")
-                else:
-                    client_socket.sendall(b"AUTH_REQUIRED\n")
-            else:
-                if ":" in received_message:
-                    recipient, message = received_message.split(":", 1)
-                    recipient = recipient.strip()
-                    message = message.strip()
-                    message = message[:MAX_MESSAGE_LENGTH]
-                    if len(recipient) < 3:
-                        client_socket.sendall(
-                            b"ERROR:Invalid message format (recipient must be at least 3 characters)\n"
-                        )
-                        continue
+            except Exception as e:
+                logger.error(f"Error: {e}")
+                break
 
-                    if len(message) == 0:
-                        client_socket.sendall(
-                            b"ERROR:You can't send an empty message...\n"
-                        )
-                        continue
+        self.clients.remove(client_socket)
+        client_socket.close()
+        if username and username in self.sessions:
+            self.sessions.pop(username)
+        logger.debug(f"Connection from {client_address} closed")
 
-                    if recipient.lower() == "global":
-                        check_rate_limit(username)
-                        user_last_message_time[username] = time.time()
-                        send_global_message(username, message)
+    def start(self):
+        # load and check settings
+        if not self.config.getboolean('server', 'online-mode', fallback=True):
+            logger.warning("⚠️ " + "=" * 53)
+            logger.warning("⚠️ = WARNING: This server is running in offline/insecure mode! =")
+            logger.warning("⚠️ = This will not check TINET for authentication!             =")
+            logger.warning("⚠️ = People won't need to provide valid credentials to use     =")
+            logger.warning("⚠️ = any username they want, this might cause issues, please   =")
+            logger.warning("⚠️ = put your online-mode field back to true in the [server]   =")
+            logger.warning("⚠️ = section in server.properties.example to ensure max. security!     =")
+            logger.warning("⚠️ = It is recommended to run the server in online mode for    =")
+            logger.warning("⚠️ = improved security and authentication.                     =")
+            logger.warning("⚠️ " + "=" * 53)
 
-                    else:
-                        client_socket.sendall(b"ERROR:Please use the `global` recipient for now\n")
-                else:
-                    client_socket.sendall(b"ERROR:Invalid message format\n")
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            break
-
-    clients.remove(client_socket)
-    client_socket.close()
-    if username and username in sessions:
-        sessions.pop(username)
-    logger.debug(f"Connection from {client_address} closed")
-
-
-def main():
-    global SERVER_ONLINE
-
-    # load and check settings
-    if not config.getboolean('server', 'online-mode', fallback=True):
-        logger.warning("⚠️ " + "=" * 53)
-        logger.warning("⚠️ = WARNING: This server is running in offline/insecure mode! =")
-        logger.warning("⚠️ = This will not check TINET for authentication!             =")
-        logger.warning("⚠️ = People won't need to provide valid credentials to use     =")
-        logger.warning("⚠️ = any username they want, this might cause issues, please   =")
-        logger.warning("⚠️ = put your online-mode field back to true in the [server]   =")
-        logger.warning("⚠️ = section in server.properties.example to ensure max. security!     =")
-        logger.warning("⚠️ = It is recommended to run the server in online mode for    =")
-        logger.warning("⚠️ = improved security and authentication.                     =")
-        logger.warning("⚠️ " + "=" * 53)
-
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(
-        (
-            config.get('server', 'host', fallback="127.0.0.1"),
-            config.getint('server', 'port', fallback=2052)
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind(
+            (
+                self.config.get('server', 'host', fallback="127.0.0.1"),
+                self.config.getint('server', 'port', fallback=2052)
+            )
         )
-    )
-    server_socket.settimeout(1)
-    server_socket.listen(5)
-    logger.info(
-        f"Server listening on "
-        f"{config.get('server', 'host', fallback="127.0.0.1")}"
-        f":"
-        f"{config.getint('server', 'port', fallback=2052)}"
-    )
+        self.server_socket.settimeout(1)
+        self.server_socket.listen(5)
+        logger.info(
+            f"Server listening on "
+            f"{self.config.get('server', 'host', fallback='127.0.0.1')}"
+            f":"
+            f"{self.config.getint('server', 'port', fallback=2052)}"
+        )
 
-    SERVER_ONLINE = True
+        self.SERVER_ONLINE = True
 
-    try:
-        while SERVER_ONLINE:
-            try:
-                client_socket, client_address = server_socket.accept()
-            except TimeoutError:
-                continue
-            clients.append(client_socket)
-            client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
-            client_thread.start()
-    except KeyboardInterrupt:
-        logger.info("Shutting down the server.")
-        logger.info(f"This might take some time since we are announcing {len(clients)} clients.")
-        client_index = 0
-        for client_socket in clients:
-            logger.debug(f"Closing client {client_index}/{len(clients)}.")
-            client_socket.sendall(b"SERVER_SHUTDOWN")
-            time.sleep(100)
-            client_socket.close()
-        server_socket.close()
+        try:
+            while self.SERVER_ONLINE:
+                try:
+                    client_socket, client_address = self.server_socket.accept()
+                except TimeoutError:
+                    continue
+                self.clients.append(client_socket)
+                client_thread = threading.Thread(target=self.handle_client, args=(client_socket, client_address))
+                client_thread.start()
+        except KeyboardInterrupt:
+            self.shutdown_requested = True
+            logger.info("Shutting down the server.")
+            logger.info(f"This might take some time since we are announcing {len(self.clients)} clients.")
+            client_index = 0
+            for client_socket in self.clients:
+                logger.debug(f"Closing client {client_index}/{len(self.clients)}.")
+                client_socket.sendall(b"SERVER_SHUTDOWN")
+                time.sleep(100)
+                client_socket.close()
+            self.server_socket.close()
 
-        SERVER_ONLINE = False
+            self.SERVER_ONLINE = False
 
-        for thread in threading.enumerate():
-            if thread != threading.current_thread():
-                thread.join()
+            for thread in threading.enumerate():
+                if thread != threading.current_thread():
+                    thread.join()
+
+    def keyboard_listener(self):
+        input("Press any key to send a message to all clients under [server] message\n")
+        message = input("Enter your message: ")
+        if message:
+            self.send_global_message("[server]", message)
 
 
 if __name__ == "__main__":
-    main()
+    server = Server()
+    keyboard_thread = threading.Thread(target=server.keyboard_listener)
+    keyboard_thread.start()
+    server.start()
