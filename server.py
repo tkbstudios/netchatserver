@@ -39,11 +39,18 @@ user_last_message_time = {}
 
 config = configparser.ConfigParser()
 config.read('server.properties')
+PUBLIC_ACCESS_HOST = config.get('server', 'public-access-host', fallback="no address set")
+WELCOME_MESSAGE_ENABLED = config.getboolean('server', 'enable-welcome-message', fallback=False)
+WELCOME_MESSAGE = config.get('server', 'welcome-message', fallback="There's no welcome message set!")
+MAX_MESSAGE_LENGTH = config.getint('server', 'max-message-length', fallback=256)
+ANNOUNCE_NEW_USERS = config.getboolean('server', 'announce-new-clients', fallback=True)
 
 dotenv.load_dotenv('.env')
 APP_API_KEY = os.environ.get("APP_API_KEY").strip()
 
 SERVER_ONLINE = False
+
+clients = []
 
 
 def get_user_data_from_api(username):
@@ -74,7 +81,24 @@ def check_rate_limit(username):
             time.sleep(1 - elapsed_time)
 
 
-def handle_client(client_socket, client_address, clients):
+def send_global_message(usr, msg):
+    for client in clients:
+        client.sendall(f"global:{usr}:{msg}\n".encode())
+        logger.debug(f"{usr} sent `{msg}` to all clients in global lobby.")
+        if config.getboolean('discord', 'hook-enabled', fallback=False):
+            hook_url = config.get('discord', 'hook-url', fallback=None)
+            if hook_url:
+                body = {
+                    "username": f"[NETCHAT] {usr} "
+                                f"({PUBLIC_ACCESS_HOST})",
+                    "content": msg
+                }
+                hook_post_request = requests.post(hook_url, json=body)
+                if hook_post_request.status_code == 200:
+                    logger.debug(f"Sent `{msg}` to Discord hook.")
+
+
+def handle_client(client_socket, client_address):
     global SERVER_ONLINE
     logger.debug(f"Accepted connection from {client_address}")
 
@@ -87,20 +111,20 @@ def handle_client(client_socket, client_address, clients):
             if not data:
                 break
 
-            message = data.decode().strip()
+            received_message = data.decode().strip()
 
             if not authenticated:
-                if message.startswith("AUTH:"):
-                    parts = message.split(":")
+                if received_message.startswith("AUTH:"):
+                    parts = received_message.split(":")
                     if len(parts) == 3:
                         _, received_username, received_session_token = parts
                         session_token = received_session_token
                         if not config.getboolean('server', 'online-mode', fallback=True):
                             authenticated = True
-                            username = received_username
                             session_token = ''.join(
                                 random.choice(string.ascii_letters + string.digits) for _ in range(256)
                             )
+                            username = received_username
                             sessions[received_username] = session_token
                             client_socket.sendall(b"AUTH_SUCCESS\n")
                         else:
@@ -112,10 +136,13 @@ def handle_client(client_socket, client_address, clients):
                                     authenticated = True
                                     client_socket.sendall(b"AUTH_SUCCESS\n")
                                     logger.debug(f"User {username} authenticated successfully. User data: {userdata}")
+                                    if WELCOME_MESSAGE_ENABLED:
+                                        client_socket.sendall(WELCOME_MESSAGE.encode())
                                 else:
                                     client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET\n")
                             else:
-                                sessions.pop(received_username)
+                                if received_message in sessions:
+                                    sessions.pop(received_username)
                                 client_socket.sendall(b"AUTH_FAILED:No valid session token\n")
                                 logger.warning(f"Authentication failed for user {received_username}.")
                     else:
@@ -123,32 +150,27 @@ def handle_client(client_socket, client_address, clients):
                 else:
                     client_socket.sendall(b"AUTH_REQUIRED\n")
             else:
-                if ":" in message:
-                    recipient, msg = message.split(":", 1)
+                if ":" in received_message:
+                    recipient, message = received_message.split(":", 1)
                     recipient = recipient.strip()
-                    msg = msg.strip()
+                    message = message.strip()
+                    message = message[:MAX_MESSAGE_LENGTH]
                     if len(recipient) < 3:
                         client_socket.sendall(
                             b"ERROR:Invalid message format (recipient must be at least 3 characters)\n"
                         )
-                        return
+                        continue
+
+                    if len(message) == 0:
+                        client_socket.sendall(
+                            b"ERROR:You can't send an empty message...\n"
+                        )
+                        continue
 
                     if recipient.lower() == "global":
                         check_rate_limit(username)
                         user_last_message_time[username] = time.time()
-                        for client in clients:
-                            client.sendall(f"{recipient}:{username}:{msg}\n".encode())
-                            logger.debug(f"{username} sent `{msg}` to all clients in global lobby.")
-                            if config.getboolean('discord', 'hook-enabled', fallback=False):
-                                hook_url = config.get('discord', 'hook-url', fallback=None)
-                                if hook_url:
-                                    body = {
-                                        "username": username,
-                                        "content": msg
-                                    }
-                                    hook_post_request = requests.post(hook_url, json=body)
-                                    if hook_post_request.status_code == 202:
-                                        logger.debug(f"{username} sent `{msg}` to discord hook.")
+                        send_global_message(username, message)
 
                     else:
                         client_socket.sendall(b"ERROR:Please use the `global` recipient for now\n")
@@ -197,8 +219,6 @@ def main():
         f"{config.getint('server', 'port', fallback=2052)}"
     )
 
-    clients = []
-
     SERVER_ONLINE = True
 
     try:
@@ -208,7 +228,7 @@ def main():
             except TimeoutError:
                 continue
             clients.append(client_socket)
-            client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address, clients))
+            client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
             client_thread.start()
     except KeyboardInterrupt:
         logger.info("Shutting down the server.")
