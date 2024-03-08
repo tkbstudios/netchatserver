@@ -88,11 +88,17 @@ class Server:
                     body = {
                         "username": f"[NETCHAT] {usr} "
                                     f"({self.PUBLIC_ACCESS_HOST})",
-                        "content": msg
+                        "content": self.clean_message(msg)
                     }
                     hook_post_request = requests.post(hook_url, json=body)
                     if hook_post_request.status_code == 200:
                         logger.debug(f"Sent `{msg}` to Discord hook.")
+
+    @staticmethod
+    def clean_message(message_to_clean):
+        cleaned_message = message_to_clean.replace("@everyone", "[everyone mention tried]")
+        cleaned_message = cleaned_message.replace("@here", "[here mention tried]")
+        return cleaned_message
 
     def handle_client(self, client_socket, client_address):
         logger.debug(f"Accepted connection from {client_address}")
