@@ -246,15 +246,7 @@ class Server:
                 if thread != threading.current_thread():
                     thread.join()
 
-    def keyboard_listener(self):
-        input("Press any key to send a message to all clients under [server] message\n")
-        message = input("Enter your message: ")
-        if message:
-            self.send_global_message("[server]", message)
-
 
 if __name__ == "__main__":
     server = Server()
-    keyboard_thread = threading.Thread(target=server.keyboard_listener)
-    keyboard_thread.start()
     server.start()
