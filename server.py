@@ -11,7 +11,7 @@ import configparser
 import dotenv
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 formatter = ColoredFormatter(
     "%(log_color)s%(levelname)-8s%(reset)s %(cyan)s%(message)s",
@@ -196,7 +196,7 @@ class Server:
             logger.warning("⚠️ = People won't need to provide valid credentials to use     =")
             logger.warning("⚠️ = any username they want, this might cause issues, please   =")
             logger.warning("⚠️ = put your online-mode field back to true in the [server]   =")
-            logger.warning("⚠️ = section in server.properties.example to ensure max. security!     =")
+            logger.warning("⚠️ = section in server.properties to ensure max. security!     =")
             logger.warning("⚠️ = It is recommended to run the server in online mode for    =")
             logger.warning("⚠️ = improved security and authentication.                     =")
             logger.warning("⚠️ " + "=" * 53)
@@ -246,15 +246,7 @@ class Server:
                 if thread != threading.current_thread():
                     thread.join()
 
-    def keyboard_listener(self):
-        input("Press any key to send a message to all clients under [server] message\n")
-        message = input("Enter your message: ")
-        if message:
-            self.send_global_message("[server]", message)
-
 
 if __name__ == "__main__":
     server = Server()
-    keyboard_thread = threading.Thread(target=server.keyboard_listener)
-    keyboard_thread.start()
     server.start()
