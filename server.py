@@ -79,20 +79,21 @@ class Server:
                 time.sleep(1 - elapsed_time)
 
     def send_global_message(self, usr, msg):
+        clean_msg = self.clean_message(msg)
         for client in self.clients:
-            client.sendall(f"global:{usr}:{msg}\n".encode())
-            logger.debug(f"{usr} sent `{msg}` to all clients in global lobby.")
+            client.sendall(f"global:{usr}:{clean_msg}\n".encode())
+            logger.debug(f"{usr} sent `{clean_msg}` to all clients in global lobby.")
             if self.config.getboolean('discord', 'hook-enabled', fallback=False):
                 hook_url = self.config.get('discord', 'hook-url', fallback=None)
                 if hook_url:
                     body = {
                         "username": f"[NETCHAT] {usr} "
                                     f"({self.PUBLIC_ACCESS_HOST})",
-                        "content": self.clean_message(msg)
+                        "content": clean_msg
                     }
                     hook_post_request = requests.post(hook_url, json=body)
                     if hook_post_request.status_code == 200:
-                        logger.debug(f"Sent `{msg}` to Discord hook.")
+                        logger.debug(f"Sent `{clean_msg}` to Discord hook.")
 
     @staticmethod
     def clean_message(message_to_clean):
