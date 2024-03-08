@@ -38,6 +38,7 @@ dotenv.load_dotenv('.env')
 class Server:
     def __init__(self):
         self.sessions = {}
+        self.client_sockets = {}
         self.user_last_message_time = {}
         self.config = configparser.ConfigParser()
         self.config.read('server.properties')
@@ -78,22 +79,42 @@ class Server:
             if elapsed_time < 1:
                 time.sleep(1 - elapsed_time)
 
-    def send_global_message(self, usr, msg):
-        clean_msg = self.clean_message(msg)
-        for client in self.clients:
-            client.sendall(f"global:{usr}:{clean_msg}\n".encode())
-            logger.debug(f"{usr} sent `{clean_msg}` to all clients in global lobby.")
-            if self.config.getboolean('discord', 'hook-enabled', fallback=False):
-                hook_url = self.config.get('discord', 'hook-url', fallback=None)
-                if hook_url:
-                    body = {
-                        "username": f"[NETCHAT] {usr} "
-                                    f"({self.PUBLIC_ACCESS_HOST})",
-                        "content": clean_msg
-                    }
-                    hook_post_request = requests.post(hook_url, json=body)
-                    if hook_post_request.status_code == 200:
-                        logger.debug(f"Sent `{clean_msg}` to Discord hook.")
+    def send_to_webhook(self, username, message):
+        if self.config.getboolean('discord', 'hook-enabled', fallback=False):
+            hook_url = self.config.get('discord', 'hook-url', fallback=None)
+            if hook_url:
+                body = {
+                    "username": f"[NETCHAT] {username} "
+                                f"({self.PUBLIC_ACCESS_HOST})",
+                    "content": message
+                }
+                hook_post_request = requests.post(hook_url, json=body)
+                if hook_post_request.status_code == 200:
+                    logger.debug(f"Sent `{message}` to Discord hook.")
+
+    def send_to_recipient(self, recipient, sender_username, message):
+        clean_msg = self.clean_message(message)
+        bytes_to_send = f"{recipient}:{sender_username}:{clean_msg}\n".encode()
+
+        if recipient == "global":
+            self.send_to_webhook(sender_username, clean_msg)
+            for client in self.clients:
+                client.sendall(bytes_to_send)
+        else:
+            recipient_socket = self.get_socket_from_username(recipient)
+            if recipient_socket:
+                logger.debug(f"Sending to recipient socket! {recipient_socket}")
+                recipient_socket.sendall(bytes_to_send)
+
+            else:
+                logger.info(f"Recipient '{recipient}' not found or offline.")
+
+        logger.debug(f"{sender_username} sent `{clean_msg}` to {recipient}.")
+
+    def get_socket_from_username(self, username):
+        if username in self.client_sockets:
+            return self.client_sockets[username]
+        return None
 
     @staticmethod
     def clean_message(message_to_clean):
@@ -128,14 +149,20 @@ class Server:
                                 )
                                 username = received_username
                                 self.sessions[username] = session_token
-                                logger.info(f"{username} has logged in!")
+                                self.client_sockets[username] = client_socket
+                                logger.info(f"{username} has logged in! OFFLINE MODE")
                                 if self.ANNOUNCE_NEW_USERS:
-                                    self.send_global_message("[server]", f"{username} has joined!")
+                                    self.send_to_recipient(
+                                        "global",
+                                        "[server]",
+                                        f"{username} has joined (OFFLINE MODE)!"
+                                    )
                                 client_socket.sendall(b"AUTH_SUCCESS\n")
                             else:
                                 if session_token:
                                     username = received_username
                                     self.sessions[received_username] = session_token
+                                    self.client_sockets[username] = client_socket
                                     userdata = self.get_user_data_from_api(received_username)
                                     if userdata:
                                         authenticated = True
@@ -143,14 +170,17 @@ class Server:
                                         logger.debug(
                                             f"User {username} authenticated successfully. User data: {userdata}")
                                         if self.WELCOME_MESSAGE_ENABLED:
-                                            client_socket.sendall(self.WELCOME_MESSAGE.encode())
+                                            welcome_message_to_send = f"WELCOME_MESSAGE:{self.WELCOME_MESSAGE}"
+                                            client_socket.sendall(welcome_message_to_send.encode())
                                         if self.ANNOUNCE_NEW_USERS:
-                                            self.send_global_message("[server]", f"{username} has joined!")
+                                            self.send_to_recipient("global", "[server]", f"{username} has joined!")
                                     else:
                                         client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET\n")
                                 else:
-                                    if received_message in self.sessions:
+                                    if received_username in self.sessions:
                                         self.sessions.pop(received_username)
+                                    if received_username in self.client_sockets:
+                                        self.client_sockets.pop(received_username)
                                     client_socket.sendall(b"AUTH_FAILED:No valid session token\n")
                                     logger.warning(f"Authentication failed for user {received_username}.")
                         else:
@@ -175,13 +205,9 @@ class Server:
                             )
                             continue
 
-                        if recipient.lower() == "global":
-                            self.check_rate_limit(username)
-                            self.user_last_message_time[username] = time.time()
-                            self.send_global_message(username, message)
-
-                        else:
-                            client_socket.sendall(b"ERROR:Please use the `global` recipient for now\n")
+                        self.check_rate_limit(username)
+                        self.user_last_message_time[username] = time.time()
+                        self.send_to_recipient(recipient, username, message)
                     else:
                         client_socket.sendall(b"ERROR:Invalid message format\n")
             except Exception as e:
@@ -190,8 +216,10 @@ class Server:
 
         self.clients.remove(client_socket)
         client_socket.close()
-        if username and username in self.sessions:
+        if username in self.sessions:
             self.sessions.pop(username)
+        if username in self.client_sockets:
+            self.client_sockets.pop(username)
         logger.debug(f"Connection from {client_address} closed")
 
     def start(self):
