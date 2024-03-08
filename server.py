@@ -11,7 +11,7 @@ import configparser
 import dotenv
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 formatter = ColoredFormatter(
     "%(log_color)s%(levelname)-8s%(reset)s %(cyan)s%(message)s",
