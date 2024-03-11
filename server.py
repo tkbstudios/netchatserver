@@ -120,8 +120,12 @@ class Server:
             session_token_request = requests.post(auth_with_session_token_url, headers=headers, json=body)
             if session_token_request.status_code == 200:
                 user_data = session_token_request.json()
-                return user_data
-        return None
+                return True, user_data
+            else:
+                if 'error' in session_token_request.json():
+                    if session_token_request.json()['error'] == "User has not granted access to the app":
+                        return None, session_token_request.json()['grant_url']
+        return None, None
 
     def check_rate_limit(self, username):
         last_message_time = self.user_last_message_time.get(username)
@@ -214,18 +218,24 @@ class Server:
                                     username = received_username
                                     self.sessions[received_username] = session_token
                                     self.client_sockets[username] = client_socket
-                                    userdata = self.get_user_data_from_api(received_username)
-                                    if userdata:
+                                    success, response = self.get_user_data_from_api(received_username)
+                                    if success and response:
                                         authenticated = True
                                         client_socket.sendall(b"AUTH_SUCCESS\n")
                                         logger.debug(
-                                            f"User {username} authenticated successfully. User data: {userdata}")
+                                            f"User {username} authenticated successfully. User data: {response}")
                                         if self.WELCOME_MESSAGE_ENABLED:
                                             welcome_message_to_send = f"WELCOME_MESSAGE:{self.WELCOME_MESSAGE}"
                                             client_socket.sendall(welcome_message_to_send.encode())
                                         if self.ANNOUNCE_NEW_USERS:
                                             self.send_to_recipient("global", "[server]", f"{username} has joined!")
                                     else:
+                                        if response:
+                                            client_socket.sendall(
+                                                f"AUTH_FAILED:"
+                                                f"Please grant this app access to your account here: "
+                                                f"{response}"
+                                                .encode())
                                         client_socket.sendall(b"AUTH_FAILED:Could not get user data from TINET\n")
                                 else:
                                     if received_username in self.sessions:
