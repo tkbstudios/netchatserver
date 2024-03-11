@@ -2,6 +2,7 @@ import os
 import random
 import socket
 import string
+import sys
 import threading
 import requests
 import logging
@@ -9,6 +10,7 @@ from colorlog import ColoredFormatter
 import time
 import configparser
 import dotenv
+import shutil
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -37,6 +39,8 @@ dotenv.load_dotenv('.env')
 
 class Server:
     def __init__(self):
+        self.setup_files_and_directories()
+        self.update_server_properties()
         self.sessions = {}
         self.client_sockets = {}
         self.user_last_message_time = {}
@@ -52,6 +56,53 @@ class Server:
         self.clients = []
         self.server_socket = None
         self.shutdown_requested = False
+
+    @staticmethod
+    def setup_files_and_directories():
+        changed_anything = False
+
+        if not os.path.exists("server.properties"):
+            logger.error("`server.properties` NOT found! Copying the example over.")
+            if os.path.exists("server.properties.example"):
+                shutil.copyfile("server.properties.example", "server.properties")
+                logger.info("Copied `server.properties.example` over to `server.properties`.")
+                logger.info("Please edit the `server.properties`.")
+                changed_anything = True
+
+        if not os.path.exists(".env"):
+            logger.error("`.env` NOT found! Copying the example over.")
+            if os.path.exists(".env.example"):
+                shutil.copyfile(".env.example", ".env")
+                logger.info("Copied `.env.example` over to `.env`.")
+                logger.info("Please edit the `.env`.")
+                changed_anything = True
+
+        if changed_anything:
+            sys.exit(0)
+
+    @staticmethod
+    def update_server_properties():
+        # Makes sure server.properties keeps being updated with new values.
+        changed_anything = False
+        if os.path.exists("server.properties.example") and os.path.exists("server.properties"):
+            example_config = configparser.ConfigParser()
+            example_config.read("server.properties.example")
+
+            server_config = configparser.ConfigParser()
+            server_config.read("server.properties")
+
+            for section in example_config.sections():
+                if section not in server_config:
+                    server_config[section] = {}
+                    changed_anything = True
+                for key, value in example_config[section].items():
+                    if key not in server_config[section]:
+                        server_config[section][key] = value
+                        changed_anything = True
+            if changed_anything:
+                with open("server.properties", "w") as server_properties_file:
+                    server_config.write(server_properties_file)
+                logger.info("Updated `server.properties` with new keys from `server.properties.example`.")
 
     def get_user_data_from_api(self, username):
         session_token = self.sessions.get(username)

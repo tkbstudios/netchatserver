@@ -18,12 +18,11 @@ git clone -b master https://github.com/tkbstudios/netchatserver
 cd netchatserver
 ```
 
-1. Copy the .env.example file over to .env
+1. run `python3 server.py` to set up files and directories.
 2. edit the .env to include your [App API Key](https://tinet.tkbstudios.com/dashboard/app-api-keys)
 instead of the changeme value (only if using online-mode, more on it later)
-3. Copy the server.properties.example to server.properties
-4. open server.properties and modify the settings as you'd like.
-5. run `python3 server.py`  
+3. open server.properties and modify the settings as you'd like.
+4. run `python3 server.py`  
 want to use Docker? Run `sudo docker-compose up -d`
 
 ### Server settings
