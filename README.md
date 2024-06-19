@@ -1,4 +1,14 @@
-# TINET NETCHAT Server
+# Deprecation Notice
+
+The Python server for NETCHAT is deprecated in favor of the Rust written alternative, which provides much better performance and stability.  
+Please download it from [here](https://github.com/tkbstudios/netchat-server-rust/releases)
+
+
+
+OLD README UNDER THIS LINE
+---
+
+## TINET NETCHAT Server
 
 As part of TINET, this server allows you to host your own
 NETCHAT instance.  
